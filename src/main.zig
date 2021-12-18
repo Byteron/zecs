@@ -14,12 +14,24 @@ const Velocity = struct {
 pub fn main() anyerror!void {
     var world = ecs.World.init();
 
-    try world.add(Position{ .x = 10, .y = 15});
-    try world.add(Velocity{ .x = 5, .y = 0});
+    const entity1 = world.spawn();
+    const entity2 = world.spawn();
 
-    var pos = try world.get(Position, 0);
-    var vel = try world.get(Velocity, 0);
+    try world.add(entity1, Position{ .x = 0, .y = 0});
+    try world.add(entity1, Velocity{ .x = 5, .y = 0});
 
-    std.debug.print("{}\n", .{pos});
-    std.debug.print("{}\n", .{vel});
+    try world.add(entity2, Position{ .x = 20, .y = 20});
+    try world.add(entity2, Velocity{ .x = -5, .y = 0});
+
+    world.query(.{Position, Velocity});
+    
+    print_entity(&world, entity1);
+    print_entity(&world, entity2);
+}
+
+fn print_entity(world: *ecs.World, entity: usize) void {
+    var pos = try world.get(Position, entity);
+    var vel = try world.get(Velocity, entity);
+
+    std.debug.print("Entity: {}\n{}\n{}\n", .{entity, pos, vel});
 }
