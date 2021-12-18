@@ -7,7 +7,9 @@ pub const World = struct {
     pools: std.AutoHashMap(usize, *c_void),
 
     pub fn init() World {
-        return World{ .pools = std.AutoHashMap(usize, *c_void).init(alloc) };
+        return World{
+            .pools = std.AutoHashMap(usize, *c_void).init(alloc),
+        };
     }
 
     pub fn add(self: *World, component: anytype) !void {
@@ -16,13 +18,13 @@ pub const World = struct {
 
         var pool: *Pool(T) = undefined;
         if (self.pools.contains(type_id)) {
-            var pool_pointer = self.*.pools.get(type_id).?;
-            pool = @ptrCast(*Pool(T), @alignCast(@alignOf(Pool(T)), pool_pointer));
+            var pool_ptr = self.*.pools.get(type_id).?;
+            pool = ptrToStruct(Pool(T), pool_ptr);
         } else {
             pool = try alloc.create(Pool(T));
             pool.* = Pool(T).init(alloc);
-            var pool_pointer = @ptrCast(*c_void, pool);
-            try self.pools.put(type_id, pool_pointer);
+            var pool_ptr = structToPtr(pool);
+            try self.pools.put(type_id, pool_ptr);
         }
 
         try pool.add(component);
@@ -31,8 +33,8 @@ pub const World = struct {
     pub fn get(self: *World, comptime T: type, index: usize) !T {
         const type_id = typeId(T);
 
-        var pool_pointer = self.pools.get(type_id).?;
-        var pool = @ptrCast(*Pool(T), @alignCast(@alignOf(Pool(T)), pool_pointer));
+        var pool_ptr = self.pools.get(type_id).?;
+        var pool = ptrToStruct(Pool(T), pool_ptr);
         return pool.get(index);
     }
 };
@@ -57,6 +59,14 @@ pub fn Pool(comptime T: type) type {
             return self.components.items[index];
         }
     };
+}
+
+fn structToPtr(s: anytype) *c_void {
+    return @ptrCast(*c_void, s);
+}
+
+fn ptrToStruct(comptime T: type, ptr: *c_void) *T {
+    return @ptrCast(*T, @alignCast(@alignOf(T), ptr));
 }
 
 fn TypeId(comptime T: type) type {
