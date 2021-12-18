@@ -38,24 +38,45 @@ pub const World = struct {
         try pool.add(entity, component);
     }
 
-    pub fn get(self: *World, comptime T: type, index: usize) !T {
+    pub fn get(self: *World, comptime T: type, entity: usize) !T {
         const type_id = typeId(T);
-
         var pool_ptr = self.pools.get(type_id).?;
         var pool = ptrToStruct(Pool(T), pool_ptr);
-        return pool.get(index);
+        return pool.get(entity);
     }
 
-    pub fn query(self: *World, arche_type: anytype) void {
-        _ = self;
+    pub fn has(self: *World, comptime T: type, entity: usize) bool {
+        const type_id = typeId(T);
+        var pool_ptr = self.pools.get(type_id).?;
+        var pool = ptrToStruct(Pool(T), pool_ptr);
+        return pool.has(entity);
+    }
 
+    pub fn query(self: *World, arche_type: anytype) ![]usize {
         const ArcheType = @TypeOf(arche_type);
+
         if (@typeInfo(ArcheType) != .Struct) {
             @compileError("Expected tuple or struct argument, found " ++ @typeName(ArcheType));
         }
 
-        const fields_info = std.meta.fields(ArcheType);
-        std.debug.print("{}\n", .{arche_type});
+        var list = std.ArrayList(usize).init(alloc);
+
+        var index: usize = 0;
+        while (index < self.entity_count) : (index += 1) {
+            var has_components = true;
+
+            inline for (arche_type) |T| {
+                if (!self.has(T, index)) {
+                    has_components = false;
+                }
+            }
+
+            if (has_components) {
+                try list.append(index);
+            }
+        }
+
+        return list.items;
     }
 };
 
@@ -72,12 +93,15 @@ pub fn Pool(comptime T: type) type {
         }
 
         pub fn add(self: *Pool(T), entity: usize, component: T) !void {
-            if (entity >= self.components.items.len)
-            {
+            if (entity >= self.components.items.len) {
                 try self.components.resize(entity + 1);
             }
 
             self.components.items[entity] = component;
+        }
+
+        pub fn has(self: Pool(T), entity: usize) bool {
+            return self.components.items.len > entity;
         }
 
         pub fn get(self: *Pool(T), entity: usize) !T {
