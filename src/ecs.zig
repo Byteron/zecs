@@ -45,6 +45,13 @@ pub const World = struct {
         return pool.get(entity);
     }
 
+    pub fn remove(self: *World, comptime T: type, entity: usize) void {
+        const type_id = typeId(T);
+        var pool_ptr = self.pools.get(type_id).?;
+        var pool = ptrToStruct(Pool(T), pool_ptr);
+        pool.remove(entity);
+    }
+
     pub fn has(self: *World, comptime T: type, entity: usize) bool {
         const type_id = typeId(T);
         var pool_ptr = self.pools.get(type_id).?;
@@ -84,28 +91,38 @@ pub fn Pool(comptime T: type) type {
     return struct {
         const Self = @This();
 
+        indices: std.AutoHashMap(usize, usize),
         components: std.ArrayList(T),
 
         pub fn init(allocator: std.mem.Allocator) Self {
             return Self{
+                .indices = std.AutoHashMap(usize, usize).init(allocator),
                 .components = std.ArrayList(T).init(allocator),
             };
         }
 
         pub fn add(self: *Pool(T), entity: usize, component: T) !void {
-            if (entity >= self.components.items.len) {
-                try self.components.resize(entity + 1);
+            if (self.indices.contains(entity)) {
+                self.components.items[self.indices.get(entity).?] = component;
             }
-
-            self.components.items[entity] = component;
-        }
-
-        pub fn has(self: Pool(T), entity: usize) bool {
-            return self.components.items.len > entity;
+            else
+            {
+                try self.components.append(component);
+                try self.indices.put(entity, self.components.items.len - 1);
+            }
+            
         }
 
         pub fn get(self: *Pool(T), entity: usize) !T {
-            return self.components.items[entity];
+            return self.components.items[self.indices.get(entity).?];
+        }
+
+        pub fn remove(self: *Pool(T), entity: usize) void {
+            _ = self.indices.remove(entity);
+        }
+
+        pub fn has(self: Pool(T), entity: usize) bool {
+            return self.indices.contains(entity);
         }
     };
 }

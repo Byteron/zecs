@@ -25,16 +25,21 @@ pub fn main() anyerror!void {
     const entity3 = world.spawn();
     try world.add(entity3, Position{ .x = 30, .y = 30});
 
-    const query = try world.query(.{Position, Velocity});
+    world.remove(Position, entity2);
 
-    for (query) |entity| {
-        print_entity(&world, entity);
+    const pv_query = try world.query(.{Position, Velocity});
+    const v_query = try world.query(.{Velocity});
+    const p_query = try world.query(.{Position});
+
+    for (pv_query) |entity| {
+        std.debug.print("Entity {}\n", .{entity});
     }
-}
+    
+    for (v_query) |entity| {
+        std.debug.print("Entity {}\n", .{entity});
+    }
 
-fn print_entity(world: *ecs.World, entity: usize) void {
-    var pos = try world.get(Position, entity);
-    var vel = try world.get(Velocity, entity);
-
-    std.debug.print("Entity {}: {}, {}\n", .{entity, pos, vel});
+    for (p_query) |entity| {
+        std.debug.print("Entity {}\n", .{entity});
+    }
 }
