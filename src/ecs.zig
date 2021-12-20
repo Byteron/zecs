@@ -14,6 +14,11 @@ pub const World = struct {
         };
     }
 
+    pub fn deinit(self: *World) void {
+        _ = self;
+        // TODO: deinit pools
+    }
+
     pub fn spawn(self: *World) usize {
         var entity = self.entity_count;
         self.entity_count += 1;
@@ -38,7 +43,7 @@ pub const World = struct {
         try pool.add(entity, component);
     }
 
-    pub fn get(self: *World, comptime T: type, entity: usize) !T {
+    pub fn get(self: *World, comptime T: type, entity: usize) !*T {
         const type_id = typeId(T);
         var pool_ptr = self.pools.get(type_id).?;
         var pool = ptrToStruct(Pool(T), pool_ptr);
@@ -113,8 +118,8 @@ pub fn Pool(comptime T: type) type {
             
         }
 
-        pub fn get(self: *Pool(T), entity: usize) !T {
-            return self.components.items[self.indices.get(entity).?];
+        pub fn get(self: *Pool(T), entity: usize) !*T {
+            return &self.components.items[self.indices.get(entity).?];
         }
 
         pub fn remove(self: *Pool(T), entity: usize) void {
