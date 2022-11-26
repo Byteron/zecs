@@ -1,5 +1,5 @@
 const std = @import("std");
-const ecs = @import("ecs.zig");
+const ecs = @import("entities.zig");
 
 const Position = struct {
     x: i32 = 0,
@@ -11,18 +11,14 @@ const Velocity = struct {
     y: i32 = 0,
 };
 
+var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+const alloc = gpa.allocator();
+
 pub fn main() anyerror!void {
-    var world = ecs.World.init();
+    var world = ecs.World.init(alloc);
     defer world.deinit();
 
     try setup(&world);
-
-    try physics(&world);
-    try physics(&world);
-    try physics(&world);
-    try physics(&world);
-
-    try print(&world);
 }
 
 fn setup(world: *ecs.World) !void {
@@ -43,25 +39,3 @@ fn setup(world: *ecs.World) !void {
     try world.add(entity4, Velocity{ .x = 0, .y = -5});
 }
 
-fn physics(world: *ecs.World) !void {
-    var query = try world.query(.{Position, Velocity});
-
-    for (query) |entity| {
-        const vel = try world.get(Velocity, entity);
-        var pos = try world.get(Position, entity);
-
-        pos.x += vel.x;
-        pos.y += vel.y;
-    }
-}
-
-fn print(world: *ecs.World) !void {
-    const query = try world.query(.{Position, Velocity});
-
-    for (query) |entity| {
-        const vel = try world.get(Velocity, entity);
-        const pos = try world.get(Position, entity);
-
-        std.debug.print("Entity {}, {}, {}\n", .{entity, pos, vel});
-    }
-}
