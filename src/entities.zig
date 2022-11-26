@@ -3,14 +3,14 @@ const std = @import("std");
 pub const Entity = u64;
 
 const EntityRecord = struct {
-    table: u16,
+    table: u64,
     row: u32,
 };
 
 const TypeId = enum(usize) { _ };
 
 // typeId implementation by Felix "xq" Queißner
-fn typeId(comptime T: type) TypeId {
+fn getTypeId(comptime T: type) TypeId {
     _ = T;
     return @intToEnum(TypeId, @ptrToInt(&struct {
         var x: u8 = 0;
@@ -18,9 +18,15 @@ fn typeId(comptime T: type) TypeId {
 }
 
 const ComponentType = struct {
-    typeId: TypeId,
+    type_id: TypeId,
+    offset: usize,
     size: u32,
 };
+
+fn sort_by_type_id(context: void, lhs: ComponentType, rhs: ComponentType) bool {
+    _ = context;
+    return @enumToInt(lhs.type_id) < @enumToInt(rhs.type_id);
+}
 
 const Archetype = struct {
     const Self = @This();
@@ -30,30 +36,98 @@ const Archetype = struct {
 
     pub fn init(allocator: std.mem.Allocator, comptime component_types: anytype) !Self {
         const ComponentTypes = @TypeOf(component_types);
-        const typeInfo = @typeInfo(ComponentTypes);
+        const type_info = @typeInfo(ComponentTypes);
 
-        if (typeInfo != .Struct) {
+        if (type_info != .Struct) {
             @compileError("Expected tuple or struct argument, found " + @typeName(ComponentTypes));
         }
 
         const len = typeInfo.Struct.fields.len;
-        var componentTypes = try allocator.alloc(ComponentType, len);
+        var types = try allocator.alloc(ComponentType, len);
 
-        var hash: u64 = 0;
         comptime var index = 0;
         inline for (component_types) |T| {
-            componentTypes[index] = ComponentType{
-                .typeId = typeId(T),
+            const type_id = getTypeId(T);
+            types[index] = ComponentType{
+                .type_id = type_id,
                 .size = @sizeOf(T),
+                .offset = undefined,
             };
 
-            hash ^= @enumToInt(typeId(T));
             index += 1;
         }
 
+        std.sort.sort(ComponentType, types, {}, sort_by_type_id);
+
+        var hash: u64 = 0;
+        inline for (types) |component_type| {
+            hash ^= @enumToInt(component_type.type_id);
+        }
+
         return Self{
-            .types = componentTypes,
             .hash = hash,
+            .types = types,
+        };
+    }
+
+    pub fn with(self: *Self, comptime T: type) Self {
+        const type_info = @typeInfo(T);
+
+        const len = self.types.len + 1;
+        var types = try allocator.alloc(ComponentType, len);
+
+        comptime var index = 0;
+        inline for (self.types) |component_type| {
+            const type_id = getTypeId(T);
+            types[index] = component_type;
+            index += 1;
+        }
+
+        types[index] = ComponentType{
+            .type_id = getTypeId(T),
+            .size = @sizeOf(T),
+            .offset = undefined,
+        };
+
+        std.sort.sort(ComponentType, types, {}, sort_by_type_id);
+
+        var hash: u64 = 0;
+        inline for (types) |component_type| {
+            hash ^= @enumToInt(component_type.type_id);
+        }
+
+        return Archetype{
+            .hash = hash,
+            .types = types,
+        };
+    }
+
+    pub fn without(self: *Self, comptime T: type) Self {
+        const type_info = @typeInfo(T);
+
+        const len = self.types.len - 1;
+        var types = try allocator.alloc(ComponentType, len);
+
+        comptime var index = 0;
+        inline for (self.types) |component_type| {
+            const type_id = getTypeId(T);
+
+            if (type_id == component_type.type_id) {
+                continue;
+            }
+
+            types[index] = component_type;
+            index += 1;
+        }
+
+        var hash: u64 = 0;
+        inline for (types) |component_type| {
+            hash ^= @enumToInt(component_type.type_id);
+        }
+
+        return Archetype{
+            .hash = hash,
+            .types = types,
         };
     }
 
@@ -61,48 +135,6 @@ const Archetype = struct {
         allocator.free(self.types);
     }
 };
-
-// pub fn Archetype(comptime component_types: anytype) type {
-//     return struct {
-//         const Self = @This();
-
-//         allocator: std.mem.Allocator,
-
-//         hash: u64,
-//         types: []ComponentType,
-
-//         pub fn init(allocator: std.mem.Allocator) !Self {
-//             const ComponentTypes = @TypeOf(component_types);
-//             const typeInfo = @typeInfo(ComponentTypes);
-
-//             if (typeInfo != .Struct) {
-//                 @compileError("Expected tuple or struct argument, found " + @typeName(ComponentTypes));
-//             }
-
-//             const len = typeInfo.Struct.fields.len;
-//             var componentTypes = try allocator.alloc(ComponentType, len);
-
-//             comptime var index = 0;
-//             inline for (component_types) |T| {
-//                 componentTypes[index] = ComponentType{
-//                     .typeId = typeId(T),
-//                     .size = @sizeOf(T),
-//                 };
-//                 index += 1;
-//             }
-
-//             return Self{
-//                 .allocator = allocator,
-//                 .hash = 0,
-//                 .types = componentTypes,
-//             };
-//         }
-
-//         pub fn deinit(self: *Self) void {
-//             self.allocator.free(self.types);
-//         }
-//     };
-// }
 
 pub const Table = struct {
     const Self = @This();
@@ -117,7 +149,7 @@ pub const Table = struct {
     block: []u8,
 
     pub fn init(allocator: std.mem.Allocator, comptime component_types: anytype) !Self {
-        var table =  Self{
+        var table = Self{
             .allocator = allocator,
             .len = 0,
             .capacity = 0,
@@ -144,41 +176,57 @@ pub const Table = struct {
         return row;
     }
 
+    pub fn get(self: *Self, comptime T: type, row: u32) ?T {
+        for (self.archetype.types) |componentType| {
+            if (componentType.typeId == getTypeId(T)) {
+                const columnValues = @ptrCast([*]T, @alignCast(@alignOf(T), &self.block[componentType.offset]));
+                return columnValues[row];
+            }
+        }
+
+        return null;
+    }
+
+    pub fn set(self: *Self, comptime T: type, row: u32, component: T) !void {
+        for (self.archetype.types) |componentType| {
+            if (componentType.typeId == getTypeId(T)) {
+                const columnValues = @ptrCast([*]T, @alignCast(@alignOf(T), &self.block[componentType.offset]));
+                columnValues[row] = component;
+                return;
+            }
+        }
+
+        @panic("component could not be set");
+    }
+
     fn ensureCapacity(self: *Self) !void {
         if (self.len >= self.capacity) {
             try self.setCapacity(self.capacity << 1);
         }
     }
-    
+
     fn setCapacity(self: *Self, new_capacity: u32) !void {
-        const old_capacity = self.capacity;
-
         var archetype_size: usize = 0;
-
         for (self.archetype.types) |*componentType| {
             archetype_size += componentType.size;
         }
 
-        const new_block_size = archetype_size * new_capacity;
-
-        const old_block = self.block;
-        const new_block = try self.allocator.alloc(u8, new_block_size);
+        const new_block = try self.allocator.alloc(u8, archetype_size * new_capacity);
 
         var offset: usize = 0;
         for (self.archetype.types) |*componentType| {
-            const old_component_block_size = componentType.size * old_capacity;
-            const new_component_block_size = componentType.size * new_capacity;
-
             if (self.capacity > 0) {
-                const slice = old_block[offset .. offset + old_component_block_size];
+                const offset_end = self.capacity * componentType.size + componentType.offset;
+                const slice = self.block[componentType.offset..offset_end];
                 std.mem.copy(u8, new_block[offset..], slice);
             }
 
-            offset += new_component_block_size;
+            componentType.offset = offset;
+            offset += componentType.size * new_capacity;
         }
 
         if (self.capacity > 0) {
-            self.allocator.free(old_block);
+            self.allocator.free(self.block);
         }
 
         self.block = new_block;
@@ -199,11 +247,10 @@ pub const Entities = struct {
     entity_archetype: Archetype,
 
     pub fn init(allocator: std.mem.Allocator) !Self {
-
         const entity_table = try Table.init(allocator, .{Entity});
 
-        var entities = Self{ 
-            .allocator = allocator ,
+        var entities = Self{
+            .allocator = allocator,
             .entity_archetype = entity_table.archetype,
         };
 
@@ -232,8 +279,10 @@ pub const Entities = struct {
         var entity_table = self.tables.getPtr(self.entity_archetype.hash).?;
         const row = try entity_table.new();
 
+        try entity_table.set(Entity, row, id);
+
         const record = EntityRecord{
-            .table = 0,
+            .table = self.entity_archetype.hash,
             .row = row,
         };
 
@@ -241,32 +290,56 @@ pub const Entities = struct {
 
         return id;
     }
+
+    pub fn addComponent(self: *Self, comptime T: type, entity: Entity, component: anytype) !void {
+        const record: *EntityRecord = self.entities.getPtr(entity).?;
+        const table: *Table = self.tables.getPtr(record.table).?;
+        const new_archetype = table.archetype.with(T);
+
+        // TODO: make the table move
+
+        if (self.tables.getPtr(new_archetype.hash)) |new_table| {
+            const new_row = new_table.new();
+
+            record.row = new_row;
+        } else {
+
+        }
+    }
+
+    pub fn removeComponent(comptime T: type, entity: Entity) !void {
+        // TODO: implement removeComponent
+    }
+
+    pub fn getComponent(self: *Self, comptime T: type, entity: Entity) T {
+        const record = self.entities.getPtr(entity).?;
+        const table = self.tables.getPtr(record.table).?;
+        return table.get(T, record.row).?;
+    }
+
+    pub fn setComponent(self: *Self, comptime T: type, entity: Entity, component: T) !void {
+        const record = self.entities.getPtr(entity).?;
+        const table = self.tables.getPtr(record.table).?;
+        return table.set(T, record.row, component);
+    }
 };
-
-fn structToPtr(s: anytype) *void {
-    return @ptrCast(*void, s);
-}
-
-fn ptrToStruct(comptime T: type, ptr: *void) *T {
-    return @ptrCast(*T, @alignCast(@alignOf(T), ptr));
-}
 
 test "type_id_creation" {
     const Position = struct {};
     const Velocity = struct {};
 
-    const posType = typeId(Position);
-    const velType = typeId(Velocity);
-    const posType2 = typeId(Position);
-    const velType2 = typeId(Velocity);
+    const posType = getTypeId(Position);
+    const velType = getTypeId(Velocity);
+    const posType2 = getTypeId(Position);
+    const velType2 = getTypeId(Velocity);
 
     try std.testing.expect(posType == posType2);
     try std.testing.expect(velType == velType2);
 
     try std.testing.expect(posType != velType);
 
-    std.debug.print("{}: {}", .{ Position, typeId(Position) });
-    std.debug.print("{}: {}", .{ Velocity, typeId(Velocity) });
+    std.debug.print("{}: {}", .{ Position, getTypeId(Position) });
+    std.debug.print("{}: {}", .{ Velocity, getTypeId(Velocity) });
 }
 
 test "archetype_creation" {
@@ -281,8 +354,8 @@ test "archetype_creation" {
     const type1: ComponentType = archetype.types[0];
     const type2: ComponentType = archetype.types[1];
 
-    try std.testing.expect(type1.typeId == typeId(Position));
-    try std.testing.expect(type2.typeId == typeId(Velocity));
+    try std.testing.expect(type1.typeId == getTypeId(Position));
+    try std.testing.expect(type2.typeId == getTypeId(Velocity));
     try std.testing.expect(type1.size == @sizeOf(Position));
     try std.testing.expect(type2.size == @sizeOf(Velocity));
 }
@@ -321,20 +394,49 @@ test "spawn_entities" {
     try std.testing.expect(entity5 == 5);
 }
 
-test "set_components" {
+test "get_set_component" {
     const alloc = std.testing.allocator;
     var entities = try Entities.init(alloc);
     defer entities.deinit();
 
-    const entity1 = try entities.spawn();
-    const entity2 = try entities.spawn();
-    const entity3 = try entities.spawn();
-    const entity4 = try entities.spawn();
-    const entity5 = try entities.spawn();
+    const entity = try entities.spawn();
+    var entity_component = entities.getComponent(Entity, entity);
 
-    try std.testing.expect(entity1 == 1);
-    try std.testing.expect(entity2 == 2);
-    try std.testing.expect(entity3 == 3);
-    try std.testing.expect(entity4 == 4);
-    try std.testing.expect(entity5 == 5);
+    try std.testing.expect(entity == entity_component);
+
+    try entities.setComponent(Entity, entity, 5);
+
+    entity_component = entities.getComponent(Entity, entity);
+
+    try std.testing.expect(entity_component == 5);
+}
+
+test "add_remove_component" {
+    const alloc = std.testing.allocator;
+
+    const Position = struct {
+        x: f32,
+        y: f32,
+    };
+
+    const Velocity = struct {
+        x: f32,
+        y: f32,
+    };
+
+    var entities = try Entities.init(alloc);
+    defer entities.deinit();
+
+    const entity = try entities.spawn();
+
+    entities.addComponent(Position, entity, .{ .x = 5, .y = 5 });
+    entities.addComponent(Velocity, entity, .{ .x = 10, .y = 10 });
+
+    try std.testing.expect(entity == entity_component);
+
+    try entities.setComponent(Entity, entity, 5);
+
+    entity_component = entities.get(Entity, entity);
+
+    try std.testing.expect(entity_component == 5);
 }
