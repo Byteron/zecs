@@ -42,7 +42,7 @@ const Archetype = struct {
             @compileError("Expected tuple or struct argument, found " + @typeName(ComponentTypes));
         }
 
-        const len = typeInfo.Struct.fields.len;
+        const len = type_info.Struct.fields.len;
         var types = try allocator.alloc(ComponentType, len);
 
         comptime var index = 0;
@@ -71,14 +71,11 @@ const Archetype = struct {
     }
 
     pub fn with(self: *Self, comptime T: type) Self {
-        const type_info = @typeInfo(T);
-
         const len = self.types.len + 1;
-        var types = try allocator.alloc(ComponentType, len);
+        var types = try self.allocator.alloc(ComponentType, len);
 
         comptime var index = 0;
         inline for (self.types) |component_type| {
-            const type_id = getTypeId(T);
             types[index] = component_type;
             index += 1;
         }
@@ -103,10 +100,8 @@ const Archetype = struct {
     }
 
     pub fn without(self: *Self, comptime T: type) Self {
-        const type_info = @typeInfo(T);
-
         const len = self.types.len - 1;
-        var types = try allocator.alloc(ComponentType, len);
+        var types = try self.allocator.alloc(ComponentType, len);
 
         comptime var index = 0;
         inline for (self.types) |component_type| {
@@ -303,7 +298,7 @@ pub const Entities = struct {
 
             record.row = new_row;
         } else {
-
+            
         }
     }
 
