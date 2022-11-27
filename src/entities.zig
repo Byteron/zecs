@@ -60,7 +60,7 @@ const Archetype = struct {
         std.sort.sort(ComponentType, types, {}, sort_by_type_id);
 
         var hash: u64 = 0;
-        inline for (types) |component_type| {
+        for (types) |component_type| {
             hash ^= @enumToInt(component_type.type_id);
         }
 
@@ -173,7 +173,7 @@ pub const Table = struct {
 
     pub fn get(self: *Self, comptime T: type, row: u32) ?T {
         for (self.archetype.types) |componentType| {
-            if (componentType.typeId == getTypeId(T)) {
+            if (componentType.type_id == getTypeId(T)) {
                 const columnValues = @ptrCast([*]T, @alignCast(@alignOf(T), &self.block[componentType.offset]));
                 return columnValues[row];
             }
@@ -184,7 +184,7 @@ pub const Table = struct {
 
     pub fn set(self: *Self, comptime T: type, row: u32, component: T) !void {
         for (self.archetype.types) |componentType| {
-            if (componentType.typeId == getTypeId(T)) {
+            if (componentType.type_id == getTypeId(T)) {
                 const columnValues = @ptrCast([*]T, @alignCast(@alignOf(T), &self.block[componentType.offset]));
                 columnValues[row] = component;
                 return;
@@ -286,25 +286,25 @@ pub const Entities = struct {
         return id;
     }
 
-    pub fn addComponent(self: *Self, comptime T: type, entity: Entity, component: anytype) !void {
-        const record: *EntityRecord = self.entities.getPtr(entity).?;
-        const table: *Table = self.tables.getPtr(record.table).?;
-        const new_archetype = table.archetype.with(T);
+    // pub fn addComponent(self: *Self, comptime T: type, entity: Entity, component: anytype) !void {
+    //     const record: *EntityRecord = self.entities.getPtr(entity).?;
+    //     const table: *Table = self.tables.getPtr(record.table).?;
+    //     const new_archetype = table.archetype.with(T);
 
-        // TODO: make the table move
+    //     // TODO: make the table move
 
-        if (self.tables.getPtr(new_archetype.hash)) |new_table| {
-            const new_row = new_table.new();
+    //     if (self.tables.getPtr(new_archetype.hash)) |new_table| {
+    //         const new_row = new_table.new();
 
-            record.row = new_row;
-        } else {
+    //         record.row = new_row;
+    //     } else {
             
-        }
-    }
+    //     }
+    // }
 
-    pub fn removeComponent(comptime T: type, entity: Entity) !void {
-        // TODO: implement removeComponent
-    }
+    // pub fn removeComponent(comptime T: type, entity: Entity) !void {
+    //     // TODO: implement removeComponent
+    // }
 
     pub fn getComponent(self: *Self, comptime T: type, entity: Entity) T {
         const record = self.entities.getPtr(entity).?;
@@ -349,8 +349,8 @@ test "archetype_creation" {
     const type1: ComponentType = archetype.types[0];
     const type2: ComponentType = archetype.types[1];
 
-    try std.testing.expect(type1.typeId == getTypeId(Position));
-    try std.testing.expect(type2.typeId == getTypeId(Velocity));
+    try std.testing.expect(type1.type_id == getTypeId(Position));
+    try std.testing.expect(type2.type_id == getTypeId(Velocity));
     try std.testing.expect(type1.size == @sizeOf(Position));
     try std.testing.expect(type2.size == @sizeOf(Velocity));
 }
@@ -406,32 +406,32 @@ test "get_set_component" {
     try std.testing.expect(entity_component == 5);
 }
 
-test "add_remove_component" {
-    const alloc = std.testing.allocator;
+// test "add_remove_component" {
+//     const alloc = std.testing.allocator;
 
-    const Position = struct {
-        x: f32,
-        y: f32,
-    };
+//     const Position = struct {
+//         x: f32,
+//         y: f32,
+//     };
 
-    const Velocity = struct {
-        x: f32,
-        y: f32,
-    };
+//     const Velocity = struct {
+//         x: f32,
+//         y: f32,
+//     };
 
-    var entities = try Entities.init(alloc);
-    defer entities.deinit();
+//     var entities = try Entities.init(alloc);
+//     defer entities.deinit();
 
-    const entity = try entities.spawn();
+//     const entity = try entities.spawn();
 
-    entities.addComponent(Position, entity, .{ .x = 5, .y = 5 });
-    entities.addComponent(Velocity, entity, .{ .x = 10, .y = 10 });
+//     entities.addComponent(Position, entity, .{ .x = 5, .y = 5 });
+//     entities.addComponent(Velocity, entity, .{ .x = 10, .y = 10 });
 
-    try std.testing.expect(entity == entity_component);
+//     try std.testing.expect(entity == entity_component);
 
-    try entities.setComponent(Entity, entity, 5);
+//     try entities.setComponent(Entity, entity, 5);
 
-    entity_component = entities.get(Entity, entity);
+//     entity_component = entities.get(Entity, entity);
 
-    try std.testing.expect(entity_component == 5);
-}
+//     try std.testing.expect(entity_component == 5);
+// }
