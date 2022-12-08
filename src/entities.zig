@@ -6,13 +6,13 @@ pub const Error = error{
 
 pub const Entity = struct {
     id: u32,
-    gen: u32,
+    gen: u16,
 };
 
 const EntityRecord = struct {
     table: u32,
     row: u32,
-    gen: u32,
+    gen: i32,
 };
 
 const ComponentType = struct {
@@ -81,6 +81,36 @@ pub const Table = struct {
         return row;
     }
 
+    pub fn remove(self: *Table, row: u32) Entity {
+        var entities = self.getStorage(Entity) catch unreachable;
+        self.len -= 1;
+
+        var last = entities[self.len];
+
+        for (self.types) |t, i| {
+            const block = self.block[i];
+            const dst_start = t.size * row;
+            const dst = block[dst_start .. dst_start + t.size];
+            const src_start = t.size * (self.len);
+            const src = block[src_start .. src_start + t.size];
+            std.mem.copy(u8, dst, src);
+        }
+
+        return last;
+    }
+
+    pub fn getStorage(self: *Table, comptime T: type) ![]T {
+        const type_value = getTypeValue(T);
+        for (self.types) |component_type, i| {
+            if (component_type.value == type_value) {
+                const block = self.block[i];
+                return @ptrCast([*]T, @alignCast(@alignOf(T), block))[0..self.len];
+            }
+        }
+
+        return error.Unknown;
+    }
+
     pub fn getStorageByIndex(self: *Table, comptime T: type, index: usize) []T {
         const block = self.block[index];
         return @ptrCast([*]T, @alignCast(@alignOf(T), block))[0..self.len];
@@ -114,7 +144,7 @@ pub const Entities = struct {
 
     allocator: std.mem.Allocator,
 
-    entities: std.ArrayListUnmanaged(EntityRecord) = .{},
+    entities: []EntityRecord,
     unused_ids: std.ArrayListUnmanaged(u32) = .{},
 
     tables: std.ArrayListUnmanaged(Table) = .{},
@@ -122,14 +152,15 @@ pub const Entities = struct {
     entity_count: u32 = 0,
 
     pub fn init(allocator: std.mem.Allocator) !Self {
+        var entities = Self{
+            .allocator = allocator,
+            .entities = try allocator.alloc(EntityRecord, 256),
+        };
+
         const types = try allocator.alloc(ComponentType, 1);
         types[0] = ComponentType.init(Entity);
 
         const table = try Table.init(allocator, types);
-
-        var entities = Self{
-            .allocator = allocator,
-        };
 
         try entities.tables.append(allocator, table);
 
@@ -137,44 +168,58 @@ pub const Entities = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        self.entities.deinit(self.allocator);
+        self.allocator.free(self.entities);
 
         for (self.tables.items) |*table| {
             table.deinit();
         }
-
+        self.unused_ids.deinit(self.allocator);
         self.tables.deinit(self.allocator);
     }
 
     pub fn spawn(self: *Self) !Entity {
-        self.entity_count += 1;
-
-        const entity = Entity{
-            .id = self.entity_count,
-            .gen = 1,
+        var id = self.unused_ids.popOrNull() orelse blk: {
+            self.entity_count += 1;
+            self.entities[self.entity_count].gen = 0;
+            break :blk self.entity_count;
         };
 
         var table: *Table = &self.tables.items[0];
         const row = try table.new();
 
-        const entities = table.getStorageByIndex(Entity, 0);
-        entities[row] = entity;
+        var record = &self.entities[id];
+        record.table = 0;
+        record.gen = -record.gen + 1;
+        record.row = row;
 
-        const record = EntityRecord{
-            .table = 0,
-            .row = row,
-            .gen = entity.gen,
+        const entity = Entity{
+            .id = id,
+            .gen = @intCast(u16, record.gen),
         };
 
-        try self.entities.append(self.allocator, record);
+        const entities = table.getStorageByIndex(Entity, 0);
+        entities[row] = entity;
 
         return entity;
     }
 
-    pub fn despawn(self: *Self, entity: Entity) void {
-        const record = self.entities.items[entity.id];
-        const table = self.tables.items[record.table];
-        table.remove(record.row);
+    pub fn despawn(self: *Self, entity: Entity) !void {
+        var record = &self.entities[entity.id];
+        var table = self.tables.items[record.table];
+
+        const last_entity = table.remove(record.row);
+
+        var last_record = &self.entities[last_entity.id];
+        last_record.row = record.row;
+
+        record.gen = -record.gen;
+
+        try self.unused_ids.append(self.allocator, entity.id);
+    }
+
+    pub fn isAlive(self: *Self, entity: Entity) bool {
+        const record = self.entities[entity.id];
+        return record.entity.gen == entity.gen;
     }
 };
 
@@ -189,4 +234,13 @@ test "spawn_entities" {
     try std.testing.expect(e1.id == 1);
     try std.testing.expect(e2.id == 2);
     try std.testing.expect(e3.id == 3);
+
+    try entities.despawn(e1);
+    try entities.despawn(e2);
+
+    const e4 = try entities.spawn();
+    const e5 = try entities.spawn();
+
+    try std.testing.expect(e4.id == 2);
+    try std.testing.expect(e5.id == 1);
 }
