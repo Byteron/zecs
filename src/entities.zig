@@ -219,7 +219,7 @@ pub const Entities = struct {
 
     pub fn isAlive(self: *Self, entity: Entity) bool {
         const record = self.entities[entity.id];
-        return record.entity.gen == entity.gen;
+        return record.gen == entity.gen;
     }
 };
 
@@ -238,9 +238,18 @@ test "spawn_entities" {
     try entities.despawn(e1);
     try entities.despawn(e2);
 
+    try std.testing.expect(!entities.isAlive(e1));
+    try std.testing.expect(!entities.isAlive(e2));
+
     const e4 = try entities.spawn();
     const e5 = try entities.spawn();
 
     try std.testing.expect(e4.id == 2);
     try std.testing.expect(e5.id == 1);
+
+    try std.testing.expect(entities.isAlive(e4));
+    try std.testing.expect(entities.isAlive(e5));
+
+    try std.testing.expect(!entities.isAlive(e1));
+    try std.testing.expect(!entities.isAlive(e2));
 }
