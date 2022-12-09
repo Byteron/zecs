@@ -12,7 +12,7 @@ pub const Entity = struct {
 const EntityRecord = struct {
     table: u32,
     row: u32,
-    gen: i32,
+    gen: i16,
 };
 
 const ComponentType = struct {
@@ -38,6 +38,11 @@ fn sortByTypeId(context: void, lhs: ComponentType, rhs: ComponentType) bool {
     _ = context;
     return @enumToInt(lhs.value) < @enumToInt(rhs.value);
 }
+
+const TableEdge = struct {
+    add: *Table,
+    remove: *Table,
+};
 
 pub const Table = struct {
     allocator: std.mem.Allocator,
@@ -111,11 +116,6 @@ pub const Table = struct {
         return error.Unknown;
     }
 
-    pub fn getStorageByIndex(self: *Table, comptime T: type, index: usize) []T {
-        const block = self.block[index];
-        return @ptrCast([*]T, @alignCast(@alignOf(T), block))[0..self.len];
-    }
-
     pub fn ensureCapacity(self: *Table) !void {
         if (self.len == self.capacity) {
             try self.setCapacity(self.len + 1);
@@ -148,6 +148,7 @@ pub const Entities = struct {
     unused_ids: std.ArrayListUnmanaged(u32) = .{},
 
     tables: std.ArrayListUnmanaged(Table) = .{},
+    edges: std.ArrayListUnmanaged(std.AutoArrayHashMapUnmanaged(u32, TableEdge)) = .{},
 
     entity_count: u32 = 0,
 
@@ -160,9 +161,7 @@ pub const Entities = struct {
         const types = try allocator.alloc(ComponentType, 1);
         types[0] = ComponentType.init(Entity);
 
-        const table = try Table.init(allocator, types);
-
-        try entities.tables.append(allocator, table);
+        _ = try entities.addTable(types);
 
         return entities;
     }
@@ -173,8 +172,14 @@ pub const Entities = struct {
         for (self.tables.items) |*table| {
             table.deinit();
         }
+
+        for (self.edges.items) |*hashMap| {
+            hashMap.deinit(self.allocator);
+        }
+
         self.unused_ids.deinit(self.allocator);
         self.tables.deinit(self.allocator);
+        self.edges.deinit(self.allocator);
     }
 
     pub fn spawn(self: *Self) !Entity {
@@ -197,7 +202,7 @@ pub const Entities = struct {
             .gen = @intCast(u16, record.gen),
         };
 
-        const entities = table.getStorageByIndex(Entity, 0);
+        const entities = try table.getStorage(Entity);
         entities[row] = entity;
 
         return entity;
@@ -217,9 +222,27 @@ pub const Entities = struct {
         try self.unused_ids.append(self.allocator, entity.id);
     }
 
+    pub fn addComponent(self: *Self, comptime T: type, entity: Entity, component: T) !void {
+        var type_value = getTypeValue(T);
+
+        var record = &self.entities[entity.id];
+        var old_table = self.tables.items[record.table];
+
+        _ = type_value;
+        _ = old_table;
+        _ = component;
+    }
+
     pub fn isAlive(self: *Self, entity: Entity) bool {
         const record = self.entities[entity.id];
         return record.gen == entity.gen;
+    }
+
+    fn addTable(self: *Self, types: []ComponentType) !*Table {
+        var table = try Table.init(self.allocator, types);
+        try self.tables.append(self.allocator, table);
+        try self.edges.append(self.allocator, .{});
+        return &self.tables.items[self.tables.items.len - 1];
     }
 };
 
@@ -252,4 +275,30 @@ test "spawn_entities" {
 
     try std.testing.expect(!entities.isAlive(e1));
     try std.testing.expect(!entities.isAlive(e2));
+}
+
+test "components" {
+    const Position = struct {
+        x: f32 = 0,
+        y: f32 = 0,
+    };
+
+    const Velocity = struct {
+        x: f32 = 0,
+        y: f32 = 0,
+    };
+
+    const Health = struct {
+        max: u32,
+        current: u32 = 0,
+    };
+
+    var entities = try Entities.init(std.testing.allocator);
+    defer entities.deinit();
+
+    const e = try entities.spawn();
+
+    try entities.addComponent(Position, e, .{ .x = 5, .y = 5 });
+    try entities.addComponent(Velocity, e, .{ .x = 1 });
+    try entities.addComponent(Health, e, .{ .max = 10 });
 }
