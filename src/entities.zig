@@ -10,7 +10,7 @@ pub const Entity = struct {
 };
 
 const EntityRecord = struct {
-    table: u32,
+    table: usize,
     row: u32,
     gen: i16,
 };
@@ -36,26 +36,28 @@ fn getTypeValue(comptime T: type) usize {
 
 fn sortByTypeId(context: void, lhs: ComponentType, rhs: ComponentType) bool {
     _ = context;
-    return @enumToInt(lhs.value) < @enumToInt(rhs.value);
+    return lhs.value < rhs.value;
 }
 
 const TableEdge = struct {
-    add: *Table,
-    remove: *Table,
+    add: ?*Table = null,
+    remove: ?*Table = null,
 };
 
 pub const Table = struct {
     allocator: std.mem.Allocator,
 
+    id: usize,
     len: u32,
     capacity: u32,
 
     types: []ComponentType,
     block: [][]u8,
 
-    pub fn init(allocator: std.mem.Allocator, types: []ComponentType) !Table {
+    pub fn init(allocator: std.mem.Allocator, id: usize, types: []ComponentType) !Table {
         var table = Table{
             .allocator = allocator,
+            .id = id,
             .len = 0,
             .capacity = 0,
             .types = types,
@@ -83,13 +85,15 @@ pub const Table = struct {
 
         try self.ensureCapacity();
 
+        std.debug.print("added new row to table {}\n", .{self.id});
+
         return row;
     }
 
     pub fn remove(self: *Table, row: u32) Entity {
         var entities = self.getStorage(Entity) catch unreachable;
         self.len -= 1;
-
+        var current = entities[row];
         var last = entities[self.len];
 
         for (self.types) |t, i| {
@@ -101,13 +105,32 @@ pub const Table = struct {
             std.mem.copy(u8, dst, src);
         }
 
+        std.debug.print("removed entity {} to table {}\n", .{ current.id, self.id });
         return last;
     }
 
+    pub fn contains_type(self: *Table, component_type: ComponentType) bool {
+        for (self.types) |t| {
+            if (t.value == component_type.value) return true;
+        }
+
+        return false;
+    }
+
+    pub fn getRawStorage(self: *Table, component_type: ComponentType) ![]u8 {
+        for (self.types) |ct, i| {
+            if (component_type.value == ct.value) {
+                return self.block[i];
+            }
+        }
+
+        return error.Unknown;
+    }
+
     pub fn getStorage(self: *Table, comptime T: type) ![]T {
-        const type_value = getTypeValue(T);
-        for (self.types) |component_type, i| {
-            if (component_type.value == type_value) {
+        const component_type = ComponentType.init(T);
+        for (self.types) |ct, i| {
+            if (component_type.value == ct.value) {
                 const block = self.block[i];
                 return @ptrCast([*]T, @alignCast(@alignOf(T), block))[0..self.len];
             }
@@ -148,7 +171,7 @@ pub const Entities = struct {
     unused_ids: std.ArrayListUnmanaged(u32) = .{},
 
     tables: std.ArrayListUnmanaged(Table) = .{},
-    edges: std.ArrayListUnmanaged(std.AutoArrayHashMapUnmanaged(u32, TableEdge)) = .{},
+    edges: std.ArrayListUnmanaged(std.AutoHashMapUnmanaged(usize, TableEdge)) = .{},
 
     entity_count: u32 = 0,
 
@@ -173,8 +196,9 @@ pub const Entities = struct {
             table.deinit();
         }
 
-        for (self.edges.items) |*hashMap| {
-            hashMap.deinit(self.allocator);
+        for (self.edges.items) |*map, i| {
+            map.deinit(self.allocator);
+            std.debug.print("deinit hash map: {d}\n", .{i});
         }
 
         self.unused_ids.deinit(self.allocator);
@@ -223,13 +247,63 @@ pub const Entities = struct {
     }
 
     pub fn addComponent(self: *Self, comptime T: type, entity: Entity, component: T) !void {
-        var type_value = getTypeValue(T);
+        const component_type = ComponentType.init(T);
 
         var record = &self.entities[entity.id];
-        var old_table = self.tables.items[record.table];
+        const old_table = &self.tables.items[record.table];
+        const old_row = record.row;
 
-        _ = type_value;
-        _ = old_table;
+        if (old_table.contains_type(component_type)) {
+            return error.Unknown;
+        }
+
+        const map: *std.AutoHashMapUnmanaged(usize, TableEdge) = &self.edges.items[record.table];
+        const result = try map.getOrPut(self.allocator, component_type.value);
+        var edge: *TableEdge = result.value_ptr;
+
+        if (!result.found_existing) {
+            edge.* = .{};
+            std.debug.print("added table edge\n", .{});
+        }
+
+        var new_table: *Table = undefined;
+
+        if (edge.add) |t| {
+            new_table = t;
+        } else {
+            var types = try self.allocator.alloc(ComponentType, old_table.types.len + 1);
+            std.mem.copy(ComponentType, types[0..], old_table.types);
+            types[old_table.types.len] = component_type;
+            std.sort.sort(ComponentType, types, {}, sortByTypeId);
+            new_table = try self.addTable(types);
+        }
+
+        edge.add = new_table;
+
+        var new_row = try new_table.new();
+
+        // copy components
+
+        for (old_table.types) |t| {
+            const old_storage = try old_table.getRawStorage(t);
+            const new_storage = try new_table.getRawStorage(t);
+
+            const dst_start = t.size * new_row;
+            const dst = new_storage[dst_start .. dst_start + t.size];
+            const src_start = t.size * old_row;
+            const src = old_storage[src_start .. src_start + t.size];
+
+            std.mem.copy(u8, dst, src);
+        }
+
+        var last_entity = old_table.remove(old_row);
+        var last_record = &self.entities[last_entity.id];
+        last_record.row = old_row;
+
+        record.table = new_table.id;
+        record.row = new_row;
+        // set component
+
         _ = component;
     }
 
@@ -239,9 +313,10 @@ pub const Entities = struct {
     }
 
     fn addTable(self: *Self, types: []ComponentType) !*Table {
-        var table = try Table.init(self.allocator, types);
+        var table = try Table.init(self.allocator, self.tables.items.len, types);
         try self.tables.append(self.allocator, table);
         try self.edges.append(self.allocator, .{});
+        std.debug.print("new table and edge map: {d}\n", .{table.id});
         return &self.tables.items[self.tables.items.len - 1];
     }
 };
