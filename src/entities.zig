@@ -47,6 +47,8 @@ const TableEdge = struct {
 pub const Table = struct {
     allocator: std.mem.Allocator,
 
+    hash: usize,
+
     id: usize,
     len: u32,
     capacity: u32,
@@ -54,9 +56,10 @@ pub const Table = struct {
     types: []ComponentType,
     block: [][]u8,
 
-    pub fn init(allocator: std.mem.Allocator, id: usize, types: []ComponentType) !Table {
+    pub fn init(allocator: std.mem.Allocator, id: usize, hash: usize, types: []ComponentType) !Table {
         var table = Table{
             .allocator = allocator,
+            .hash = hash,
             .id = id,
             .len = 0,
             .capacity = 0,
@@ -79,13 +82,14 @@ pub const Table = struct {
         self.allocator.free(self.block);
     }
 
-    pub fn new(self: *Table) !u32 {
+    pub fn new(self: *Table, entity: Entity) !u32 {
         var row = self.len;
         self.len += 1;
 
         try self.ensureCapacity();
 
-        std.debug.print("added new row to table {}\n", .{self.id});
+        const entities = try self.getStorage(Entity);
+        entities[row] = entity;
 
         return row;
     }
@@ -93,7 +97,6 @@ pub const Table = struct {
     pub fn remove(self: *Table, row: u32) Entity {
         var entities = self.getStorage(Entity) catch unreachable;
         self.len -= 1;
-        var current = entities[row];
         var last = entities[self.len];
 
         for (self.types) |t, i| {
@@ -105,7 +108,6 @@ pub const Table = struct {
             std.mem.copy(u8, dst, src);
         }
 
-        std.debug.print("removed entity {} to table {}\n", .{ current.id, self.id });
         return last;
     }
 
@@ -171,6 +173,7 @@ pub const Entities = struct {
     unused_ids: std.ArrayListUnmanaged(u32) = .{},
 
     tables: std.ArrayListUnmanaged(Table) = .{},
+    hashed_tables: std.AutoHashMapUnmanaged(usize, *Table) = .{},
     edges: std.ArrayListUnmanaged(std.AutoHashMapUnmanaged(usize, TableEdge)) = .{},
 
     entity_count: u32 = 0,
@@ -182,9 +185,10 @@ pub const Entities = struct {
         };
 
         const types = try allocator.alloc(ComponentType, 1);
-        types[0] = ComponentType.init(Entity);
+        const entity_type = ComponentType.init(Entity);
+        types[0] = entity_type;
 
-        _ = try entities.addTable(types);
+        _ = try entities.addTable(entity_type.value, types);
 
         return entities;
     }
@@ -196,14 +200,14 @@ pub const Entities = struct {
             table.deinit();
         }
 
-        for (self.edges.items) |*map, i| {
+        for (self.edges.items) |*map| {
             map.deinit(self.allocator);
-            std.debug.print("deinit hash map: {d}\n", .{i});
         }
 
         self.unused_ids.deinit(self.allocator);
         self.tables.deinit(self.allocator);
         self.edges.deinit(self.allocator);
+        self.hashed_tables.deinit(self.allocator);
     }
 
     pub fn spawn(self: *Self) !Entity {
@@ -213,21 +217,19 @@ pub const Entities = struct {
             break :blk self.entity_count;
         };
 
-        var table: *Table = &self.tables.items[0];
-        const row = try table.new();
-
         var record = &self.entities[id];
-        record.table = 0;
         record.gen = -record.gen + 1;
-        record.row = row;
+        record.table = 0;
 
         const entity = Entity{
             .id = id,
             .gen = @intCast(u16, record.gen),
         };
 
-        const entities = try table.getStorage(Entity);
-        entities[row] = entity;
+        var table: *Table = &self.tables.items[0];
+        const row = try table.new(entity);
+
+        record.row = row;
 
         return entity;
     }
@@ -257,32 +259,50 @@ pub const Entities = struct {
             return error.Unknown;
         }
 
-        const map: *std.AutoHashMapUnmanaged(usize, TableEdge) = &self.edges.items[record.table];
-        const result = try map.getOrPut(self.allocator, component_type.value);
-        var edge: *TableEdge = result.value_ptr;
+        const old_map: *std.AutoHashMapUnmanaged(usize, TableEdge) = &self.edges.items[record.table];
+        const old_result = try old_map.getOrPut(self.allocator, component_type.value);
+        const old_edge: *TableEdge = old_result.value_ptr;
 
-        if (!result.found_existing) {
-            edge.* = .{};
-            std.debug.print("added table edge\n", .{});
+        if (!old_result.found_existing) {
+            old_edge.* = .{};
         }
 
         var new_table: *Table = undefined;
 
-        if (edge.add) |t| {
+        if (old_edge.add) |t| {
             new_table = t;
         } else {
-            var types = try self.allocator.alloc(ComponentType, old_table.types.len + 1);
-            std.mem.copy(ComponentType, types[0..], old_table.types);
-            types[old_table.types.len] = component_type;
-            std.sort.sort(ComponentType, types, {}, sortByTypeId);
-            new_table = try self.addTable(types);
+            var hash = old_table.hash;
+            hash ^= component_type.value;
+
+            std.debug.print("table hash: {}\n", .{hash});
+
+            if (self.hashed_tables.contains(hash)) {
+                new_table = self.hashed_tables.get(hash).?;
+            } else {
+                var types = try self.allocator.alloc(ComponentType, old_table.types.len + 1);
+                std.mem.copy(ComponentType, types[0..], old_table.types);
+                types[old_table.types.len] = component_type;
+                std.sort.sort(ComponentType, types, {}, sortByTypeId);
+                new_table = try self.addTable(hash, types);
+
+                const new_map: *std.AutoHashMapUnmanaged(usize, TableEdge) = &self.edges.items[record.table];
+                const new_result = try new_map.getOrPut(self.allocator, component_type.value);
+                const new_edge: *TableEdge = new_result.value_ptr;
+
+                if (!new_result.found_existing) {
+                    new_edge.* = .{};
+                }
+
+                new_edge.remove = old_table;
+            }
         }
 
-        edge.add = new_table;
+        old_edge.add = new_table;
 
-        var new_row = try new_table.new();
+        std.debug.print("move {} from table {} to table {}\n", .{ entity.id, old_table.id, old_edge.add.?.id });
 
-        // copy components
+        var new_row = try new_table.new(entity);
 
         for (old_table.types) |t| {
             const old_storage = try old_table.getRawStorage(t);
@@ -302,9 +322,88 @@ pub const Entities = struct {
 
         record.table = new_table.id;
         record.row = new_row;
-        // set component
 
-        _ = component;
+        const storage = try new_table.getStorage(T);
+        storage[new_row] = component;
+    }
+
+    pub fn removeComponent(self: *Self, comptime T: type, entity: Entity) !void {
+        const component_type = ComponentType.init(T);
+
+        var record = &self.entities[entity.id];
+        const old_table = &self.tables.items[record.table];
+        const old_row = record.row;
+
+        const old_map: *std.AutoHashMapUnmanaged(usize, TableEdge) = &self.edges.items[record.table];
+        const old_result = try old_map.getOrPut(self.allocator, component_type.value);
+        var old_edge: *TableEdge = old_result.value_ptr;
+
+        if (!old_result.found_existing) {
+            old_edge.* = .{};
+        }
+
+        var new_table: *Table = undefined;
+
+        if (old_edge.remove) |t| {
+            new_table = t;
+        } else {
+            var hash: usize = 0;
+            for (old_table.types) |t| {
+                if (t.value != component_type.value) hash ^= t.value;
+            }
+
+            std.debug.print("table hash: {}\n", .{hash});
+
+            if (self.hashed_tables.contains(hash)) {
+                new_table = self.hashed_tables.get(hash).?;
+            } else {
+                var types = try self.allocator.alloc(ComponentType, old_table.types.len - 1);
+
+                var index: u32 = 0;
+                for (old_table.types) |t| {
+                    if (t.value == component_type.value) continue;
+                    types[index] = t;
+                    index += 1;
+                }
+
+                new_table = try self.addTable(hash, types);
+
+                const new_map: *std.AutoHashMapUnmanaged(usize, TableEdge) = &self.edges.items[record.table];
+                const new_result = try new_map.getOrPut(self.allocator, component_type.value);
+                const new_edge: *TableEdge = new_result.value_ptr;
+
+                if (!new_result.found_existing) {
+                    new_edge.* = .{};
+                }
+
+                new_edge.add = old_table;
+            }
+        }
+
+        old_edge.remove = new_table;
+
+        std.debug.print("move {} from table {} to table {}\n", .{ entity.id, old_table.id, old_edge.remove.?.id });
+
+        var new_row = try new_table.new(entity);
+
+        for (new_table.types) |t| {
+            const old_storage = try old_table.getRawStorage(t);
+            const new_storage = try new_table.getRawStorage(t);
+
+            const dst_start = t.size * new_row;
+            const dst = new_storage[dst_start .. dst_start + t.size];
+            const src_start = t.size * old_row;
+            const src = old_storage[src_start .. src_start + t.size];
+
+            std.mem.copy(u8, dst, src);
+        }
+
+        var last_entity = old_table.remove(old_row);
+        var last_record = &self.entities[last_entity.id];
+        last_record.row = old_row;
+
+        record.table = new_table.id;
+        record.row = new_row;
     }
 
     pub fn isAlive(self: *Self, entity: Entity) bool {
@@ -312,11 +411,11 @@ pub const Entities = struct {
         return record.gen == entity.gen;
     }
 
-    fn addTable(self: *Self, types: []ComponentType) !*Table {
-        var table = try Table.init(self.allocator, self.tables.items.len, types);
+    fn addTable(self: *Self, hash: usize, types: []ComponentType) !*Table {
+        const table = try Table.init(self.allocator, self.tables.items.len, hash, types);
         try self.tables.append(self.allocator, table);
+        try self.hashed_tables.put(self.allocator, hash, &self.tables.items[table.id]);
         try self.edges.append(self.allocator, .{});
-        std.debug.print("new table and edge map: {d}\n", .{table.id});
         return &self.tables.items[self.tables.items.len - 1];
     }
 };
@@ -371,9 +470,29 @@ test "components" {
     var entities = try Entities.init(std.testing.allocator);
     defer entities.deinit();
 
-    const e = try entities.spawn();
+    const e1 = try entities.spawn();
+    const e2 = try entities.spawn();
 
-    try entities.addComponent(Position, e, .{ .x = 5, .y = 5 });
-    try entities.addComponent(Velocity, e, .{ .x = 1 });
-    try entities.addComponent(Health, e, .{ .max = 10 });
+    try entities.addComponent(Position, e1, .{ .x = 5, .y = 5 });
+    try entities.addComponent(Velocity, e1, .{ .x = 1 });
+    try entities.addComponent(Health, e1, .{ .max = 10 });
+
+    try entities.addComponent(Velocity, e2, .{ .x = 1 });
+    try entities.addComponent(Health, e2, .{ .max = 10 });
+    try entities.addComponent(Position, e2, .{ .x = 5, .y = 5 });
+
+    try entities.despawn(e1);
+
+    var e3 = try entities.spawn();
+
+    try entities.addComponent(Health, e3, .{ .max = 10 });
+    try entities.addComponent(Position, e3, .{ .x = 5, .y = 5 });
+    try entities.addComponent(Velocity, e3, .{ .x = 1 });
+
+    try entities.removeComponent(Health, e3);
+    try entities.removeComponent(Position, e3);
+    try entities.removeComponent(Velocity, e3);
+    try entities.removeComponent(Velocity, e2);
+
+    try entities.addComponent(Position, e3, .{});
 }
