@@ -280,8 +280,6 @@ pub const Entities = struct {
             var hash = old_table.hash;
             hash ^= component_type.value;
 
-            std.debug.print("table hash: {}\n", .{hash});
-
             if (self.hashed_tables.contains(hash)) {
                 new_table = self.hashed_tables.get(hash).?;
             } else {
@@ -304,8 +302,6 @@ pub const Entities = struct {
         }
 
         old_edge.add = new_table;
-
-        std.debug.print("move {} from table {} to table {}\n", .{ entity.id, old_table.id, old_edge.add.?.id });
 
         var new_row = try new_table.new(entity);
 
@@ -377,8 +373,6 @@ pub const Entities = struct {
                 if (t.value != component_type.value) hash ^= t.value;
             }
 
-            std.debug.print("table hash: {}\n", .{hash});
-
             if (self.hashed_tables.contains(hash)) {
                 new_table = self.hashed_tables.get(hash).?;
             } else {
@@ -406,8 +400,6 @@ pub const Entities = struct {
         }
 
         old_edge.remove = new_table;
-
-        std.debug.print("move {} from table {} to table {}\n", .{ entity.id, old_table.id, old_edge.remove.?.id });
 
         var new_row = try new_table.new(entity);
 
