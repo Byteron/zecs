@@ -1,9 +1,5 @@
 const std = @import("std");
 
-pub const Error = error{
-    Unknown,
-};
-
 pub const Entity = struct {
     id: u32,
     gen: u16,
@@ -88,14 +84,14 @@ pub const Table = struct {
 
         try self.ensureCapacity();
 
-        const entities = try self.getStorage(Entity);
+        const entities = self.getStorage(Entity).?;
         entities[row] = entity;
 
         return row;
     }
 
     pub fn remove(self: *Table, row: u32) Entity {
-        var entities = self.getStorage(Entity) catch unreachable;
+        var entities = self.getStorage(Entity).?;
         self.len -= 1;
         var last = entities[self.len];
 
@@ -119,17 +115,17 @@ pub const Table = struct {
         return false;
     }
 
-    pub fn getRawStorage(self: *Table, component_type: ComponentType) ![]u8 {
+    pub fn getRawStorage(self: *Table, component_type: ComponentType) ?[]u8 {
         for (self.types) |ct, i| {
             if (component_type.value == ct.value) {
                 return self.block[i];
             }
         }
 
-        return error.Unknown;
+        return null;
     }
 
-    pub fn getStorage(self: *Table, comptime T: type) ![]T {
+    pub fn getStorage(self: *Table, comptime T: type) ?[]T {
         const component_type = ComponentType.init(T);
         for (self.types) |ct, i| {
             if (component_type.value == ct.value) {
@@ -138,7 +134,7 @@ pub const Table = struct {
             }
         }
 
-        return error.Unknown;
+        return null;
     }
 
     pub fn ensureCapacity(self: *Table) !void {
@@ -249,18 +245,12 @@ pub const Entities = struct {
     }
 
     pub fn getComponent(self: *Self, comptime T: type, entity: Entity) ?*const T {
-        const component_type = ComponentType.init(T);
-
         var record = &self.entities[entity.id];
         const old_table = &self.tables.items[record.table];
         const old_row = record.row;
 
-        if (old_table.contains_type(component_type)) {
-            const storage = try old_table.getStorage(T);
-            return &storage[old_row];
-        }
-
-        return null;
+        const storage = old_table.getStorage(T) orelse return null;
+        return &storage[old_row];
     }
 
     pub fn getComponentPtr(self: *Self, comptime T: type, entity: Entity) !*T {
@@ -270,8 +260,7 @@ pub const Entities = struct {
         const old_table = &self.tables.items[record.table];
         const old_row = record.row;
 
-        if (old_table.contains_type(component_type)) {
-            const storage = try old_table.getStorage(T);
+        if (old_table.getStorage(T)) |storage| {
             return &storage[old_row];
         }
 
@@ -321,8 +310,8 @@ pub const Entities = struct {
         var new_row = try new_table.new(entity);
 
         for (old_table.types) |t| {
-            const old_storage = try old_table.getRawStorage(t);
-            const new_storage = try new_table.getRawStorage(t);
+            const old_storage = old_table.getRawStorage(t) orelse continue;
+            const new_storage = new_table.getRawStorage(t) orelse continue;
 
             const dst_start = t.size * new_row;
             const dst = new_storage[dst_start .. dst_start + t.size];
@@ -339,7 +328,7 @@ pub const Entities = struct {
         record.table = new_table.id;
         record.row = new_row;
 
-        const storage = try new_table.getStorage(T);
+        const storage = new_table.getStorage(T).?;
         return &storage[new_row];
     }
 
@@ -423,8 +412,8 @@ pub const Entities = struct {
         var new_row = try new_table.new(entity);
 
         for (new_table.types) |t| {
-            const old_storage = try old_table.getRawStorage(t);
-            const new_storage = try new_table.getRawStorage(t);
+            const old_storage = old_table.getRawStorage(t) orelse continue;
+            const new_storage = new_table.getRawStorage(t) orelse continue;
 
             const dst_start = t.size * new_row;
             const dst = new_storage[dst_start .. dst_start + t.size];
@@ -525,10 +514,19 @@ test "components" {
     try entities.setComponent(Position, e3, .{ .x = 5, .y = 5 });
     try entities.setComponent(Velocity, e3, .{ .x = 1 });
 
+    try std.testing.expect(entities.getComponent(Position, e3).?.x == 5);
+
+    const pos = try entities.getComponentPtr(Position, e3);
+    pos.y = 10;
+
+    try std.testing.expect(entities.getComponent(Position, e3).?.y == 10);
+
     try entities.removeComponent(Health, e3);
     try entities.removeComponent(Position, e3);
     try entities.removeComponent(Velocity, e3);
     try entities.removeComponent(Velocity, e2);
+
+    try std.testing.expect(entities.getComponent(Position, e3) == null);
 
     try entities.setComponent(Position, e3, .{});
 }
