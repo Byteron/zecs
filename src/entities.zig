@@ -244,7 +244,7 @@ pub const Entities = struct {
         try self.unused_ids.append(self.allocator, entity.id);
     }
 
-    pub fn getComponent(self: *Self, comptime T: type, entity: Entity) ?*const T {
+    pub fn get(self: *Self, comptime T: type, entity: Entity) ?*const T {
         var record = &self.entities[entity.id];
         const old_table = &self.tables.items[record.table];
         const old_row = record.row;
@@ -253,7 +253,7 @@ pub const Entities = struct {
         return &storage[old_row];
     }
 
-    pub fn getComponentPtr(self: *Self, comptime T: type, entity: Entity) !*T {
+    pub fn getPtr(self: *Self, comptime T: type, entity: Entity) !*T {
         const component_type = ComponentType.init(T);
 
         var record = &self.entities[entity.id];
@@ -328,7 +328,7 @@ pub const Entities = struct {
         return &storage[new_row];
     }
 
-    pub fn modifyComponent(self: *Self, comptime T: type, entity: Entity, component: T) !void {
+    pub fn modify(self: *Self, comptime T: type, entity: Entity, component: T) !void {
         const component_type = ComponentType.init(T);
 
         var record = &self.entities[entity.id];
@@ -343,12 +343,12 @@ pub const Entities = struct {
         storage[row] = component;
     }
 
-    pub fn setComponent(self: *Self, comptime T: type, entity: Entity, component: T) !void {
-        const component_ptr = try self.getComponentPtr(T, entity);
+    pub fn set(self: *Self, comptime T: type, entity: Entity, component: T) !void {
+        const component_ptr = try self.getPtr(T, entity);
         component_ptr.* = component;
     }
 
-    pub fn removeComponent(self: *Self, comptime T: type, entity: Entity) !void {
+    pub fn remove(self: *Self, comptime T: type, entity: Entity) !void {
         const component_type = ComponentType.init(T);
 
         var record = &self.entities[entity.id];
@@ -490,35 +490,35 @@ test "components" {
     const e1 = try entities.spawn();
     const e2 = try entities.spawn();
 
-    try entities.setComponent(Position, e1, .{ .x = 5, .y = 5 });
-    try entities.setComponent(Velocity, e1, .{ .x = 1 });
-    try entities.setComponent(Health, e1, .{ .max = 10 });
+    try entities.set(Position, e1, .{ .x = 5, .y = 5 });
+    try entities.set(Velocity, e1, .{ .x = 1 });
+    try entities.set(Health, e1, .{ .max = 10 });
 
-    try entities.setComponent(Velocity, e2, .{ .x = 1 });
-    try entities.setComponent(Health, e2, .{ .max = 10 });
-    try entities.setComponent(Position, e2, .{ .x = 5, .y = 5 });
+    try entities.set(Velocity, e2, .{ .x = 1 });
+    try entities.set(Health, e2, .{ .max = 10 });
+    try entities.set(Position, e2, .{ .x = 5, .y = 5 });
 
     try entities.despawn(e1);
 
     var e3 = try entities.spawn();
 
-    try entities.setComponent(Health, e3, .{ .max = 10 });
-    try entities.setComponent(Position, e3, .{ .x = 5, .y = 5 });
-    try entities.setComponent(Velocity, e3, .{ .x = 1 });
+    try entities.set(Health, e3, .{ .max = 10 });
+    try entities.set(Position, e3, .{ .x = 5, .y = 5 });
+    try entities.set(Velocity, e3, .{ .x = 1 });
 
-    try std.testing.expect(entities.getComponent(Position, e3).?.x == 5);
+    try std.testing.expect(entities.get(Position, e3).?.x == 5);
 
-    const pos = try entities.getComponentPtr(Position, e3);
+    const pos = try entities.getPtr(Position, e3);
     pos.y = 10;
 
-    try std.testing.expect(entities.getComponent(Position, e3).?.y == 10);
+    try std.testing.expect(entities.get(Position, e3).?.y == 10);
 
-    try entities.removeComponent(Health, e3);
-    try entities.removeComponent(Position, e3);
-    try entities.removeComponent(Velocity, e3);
-    try entities.removeComponent(Velocity, e2);
+    try entities.remove(Health, e3);
+    try entities.remove(Position, e3);
+    try entities.remove(Velocity, e3);
+    try entities.remove(Velocity, e2);
 
-    try std.testing.expect(entities.getComponent(Position, e3) == null);
+    try std.testing.expect(entities.get(Position, e3) == null);
 
-    try entities.setComponent(Position, e3, .{});
+    try entities.set(Position, e3, .{});
 }

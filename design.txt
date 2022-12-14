@@ -1,0 +1,35 @@
+okay soo...
+what do we catually want design wise?
+
+in terms of multithreading, there are multiple options:
+
+1) the bevy approach: constraint resolver to run systems in parallel that don't access the same storage
+- sander mentioned that this only works for in/out components, but random access still poses issues
+
+| T1 | T2 | T3 |
+----------------
+| S1 | S2 | S3 |
+
+- while the thread table looks the cleanest, this poses many issues.
+	- not all systems can be run in parallel, since some share mutable access to the same data
+	- stages are needed for sync points.
+
+2) run archetypes per system in parallel
+- this is easy to implement, but is heavily dependent on balanced fragmentation
+
+| SY |  T1  |  T2  |  T3  |
+---------------------------
+| S1 |  A1  |  A2  |  A3  |
+| S2 |  A1  |  A2  |  A3  |
+| S3 |  A1  |  A2  |  A3  |
+
+3) split entity count into <thread count> groups and process.
+- running each system in parallel, but also in order, is the most difficult to implement,
+but also seems to be the most efficient and most grub brain friendly, since from a users
+perspective all systems are still executed in the order they add them.
+
+| SY |  T1  |  T2  |  T3  |
+---------------------------
+| S1 | A1P1 | A1P2 | A1P3 |
+| S2 | A2P1 | A2P2 | A2P3 |
+| S3 | A3P1 | A3S1 | A3P3 |
