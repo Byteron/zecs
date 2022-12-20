@@ -2,6 +2,7 @@ const std = @import("std");
 const entities = @import("entities.zig");
 const Entities = entities.Entities;
 const System = *const fn (*World) anyerror!void;
+const StructField = std.builtin.Type.StructField;
 
 fn Query(comptime types: anytype, comptime filter: anytype) type {
     const TT = @TypeOf(types);
@@ -9,8 +10,45 @@ fn Query(comptime types: anytype, comptime filter: anytype) type {
     const types_info = @typeInfo(TT);
     const filter_info = @typeInfo(FT);
 
-    _ = types_info;
-    _ = filter_info;
+    if (types_info != .Struct or filter_info != .Struct) {
+        @compileError("invalid types for query\n");
+    }
+
+    var fields: []const StructField = &[0]StructField{};
+
+    inline for (types) |T| {
+        var name: []const u8 = undefined;
+        var FieldType: type = undefined;
+
+        if (T == System) {
+            name = "System";
+            FieldType = System;
+        } else {
+            var type_name = @typeName(T);
+            var split = std.mem.splitBackwards(u8, type_name, ".");
+            var last = split.next().?;
+            name = last;
+            FieldType = *T;
+        }
+
+        // @compileLog(name);
+        // @compileLog(T);
+
+        fields = fields ++ [_]StructField{.{
+            .name = name,
+            .field_type = FieldType,
+            .is_comptime = false,
+            .alignment = @alignOf(T),
+            .default_value = null,
+        }};
+    }
+
+    const Element = @Type(.{ .Struct = .{
+        .layout = .Auto,
+        .is_tuple = false,
+        .fields = fields,
+        .decls = &[_]std.builtin.Type.Declaration{},
+    } });
 
     return struct {
         const Self = @This();
@@ -18,6 +56,11 @@ fn Query(comptime types: anytype, comptime filter: anytype) type {
         pub fn init(allocator: std.mem.Allocator) Self {
             _ = allocator;
             return .{};
+        }
+
+        pub fn next(self: *Self) ?Element {
+            _ = self;
+            return null;
         }
 
         pub fn run(self: *Self, world: *World) void {
@@ -43,54 +86,49 @@ const World = struct {
         self.entities.deinit();
     }
 
-    pub fn add_system(self: *World, system: System) !void {
+    pub fn addSystem(self: *World, system: System) !void {
         const entity = try self.entities.spawn();
         try self.entities.set(System, entity, system);
     }
 
-    pub fn query(self: *World, comptime types: anytype, comptime filter: anytype) Query(types, filter) {
-        return Query(types, filter).init(self.allocator);
+    pub fn query(self: *World, comptime types: anytype) Query(types, .{}) {
+        return Query(types, .{}).init(self.allocator);
     }
 
     pub fn run(self: *World) !void {
-        var q = self.query(.{System}, .{});
-        q.run(self);
+        var q = self.query(.{System});
+        while (q.next()) |e| {
+            try e.System(self);
+        }
     }
 };
 
-const Position = struct {};
-const Velocity = struct {};
-const Active = struct {};
-const Team1 = struct {};
-const Team2 = struct {};
-const Team3 = struct {};
+const Position = struct {
+    x: i32 = 0,
+    y: i32 = 0,
+};
+const Velocity = struct {
+    x: i32 = 0,
+    y: i32 = 0,
+};
 
 test "world" {
     var world = try World.init(std.testing.allocator);
     defer world.deinit();
 
-    try world.add_system(test_system1);
-    try world.add_system(test_system2);
+    try world.addSystem(testSystem);
 
     try world.run();
     try world.run();
 }
 
-fn test_system1(world: *World) !void {
-    const query = world.query(.{ Position, Velocity }, .{ .has = .{Active}, .not = .{ Team2, Team3 } });
-    
-    query.run(fn (positions: []Position, velocities: []Velocity) anyerror!void {
-        for (positions, velocities, 0..) |pos, vel, i| {
-            pos.x += vel.x;
-            pos.y += vel.y;
-            _ = i;
-        }
-    });
-    
-    std.debug.print("test system 1!\n", .{});
-}
+fn testSystem(world: *World) !void {
+    var query = world.query(.{ Position, Velocity });
 
-fn test_system2(world: *World) !void {
-    _ = world;
-    std.debug.print("test system 2!\n", .{});
+    while (query.next()) |e| {
+        e.Position.x += e.Velocity.x;
+        e.Position.y += e.Velocity.y;
+    }
+
+    std.debug.print("hello from testSystem\n", .{});
 }
