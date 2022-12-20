@@ -107,7 +107,7 @@ pub const Table = struct {
         return last;
     }
 
-    pub fn contains_type(self: *Table, component_type: ComponentType) bool {
+    pub fn containsType(self: *Table, component_type: ComponentType) bool {
         for (self.types) |t| {
             if (t.value == component_type.value) return true;
         }
