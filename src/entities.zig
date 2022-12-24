@@ -11,7 +11,7 @@ const EntityRecord = struct {
     gen: i16,
 };
 
-const ComponentType = struct {
+pub const ComponentType = struct {
     value: usize,
     size: u32,
 
