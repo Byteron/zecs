@@ -348,6 +348,13 @@ pub const Entities = struct {
         component_ptr.* = component;
     }
 
+    pub fn has(self: *Self, comptime T: type, entity: Entity) bool {
+        if (self.get(T, entity)) |c| {
+            _ = c;
+            return true;
+        } else return false;
+    }
+
     pub fn remove(self: *Self, comptime T: type, entity: Entity) !void {
         const component_type = ComponentType.init(T);
 

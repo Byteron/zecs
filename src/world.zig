@@ -150,30 +150,70 @@ const World = struct {
     allocator: std.mem.Allocator,
 
     entities: Entities,
+    internal_entities: Entities,
+
+    queries: entities.Entity,
 
     pub fn init(allocator: std.mem.Allocator) !World {
+        const List = std.ArrayListUnmanaged;
+
+        var internal_entities = try Entities.init(allocator);
+        var queries = try internal_entities.spawn();
+        try internal_entities.set(List(*List(*Table)), queries, .{});
+
         return .{
             .allocator = allocator,
+            .internal_entities = internal_entities,
             .entities = try Entities.init(allocator),
+            .queries = queries,
         };
     }
 
     pub fn deinit(self: *World) void {
+        const List = std.ArrayListUnmanaged;
+
+        var list = self.internal_entities.getPtr(List(*List(*Table)), self.queries) catch unreachable;
+
+        for (list.items) |l| {
+            l.deinit(self.allocator);
+        }
+
+        list.deinit(self.allocator);
+        self.internal_entities.deinit();
         self.entities.deinit();
     }
 
     pub fn addSystem(self: *World, system: System) !void {
-        const entity = try self.entities.spawn();
-        try self.entities.set(System, entity, system);
+        const entity = try self.internal_entities.spawn();
+        try self.internal_entities.set(System, entity, system);
     }
 
-    pub fn query(self: *World, comptime types: anytype) !Query(types, .{}) {
-        return try Query(types, .{}).init(self.allocator, &self.entities);
+    pub fn query(self: *World, comptime types: anytype) !*Query(types, .{}) {
+        return try self.getQuery(types, &self.entities);
+    }
+
+    fn queryInternal(self: *World, comptime types: anytype) !*Query(types, .{}) {
+        return try self.getQuery(types, &self.internal_entities);
+    }
+
+    fn getQuery(self: *World, comptime types: anytype, entts: *Entities) !*Query(types, .{}) {
+        const Q = Query(types, .{});
+        const List = std.ArrayListUnmanaged;
+
+        var hasQuery = self.internal_entities.has(Q, self.queries);
+        var ptr = try self.internal_entities.getPtr(Q, self.queries);
+
+        if (!hasQuery) {
+            ptr.* = try Q.init(self.allocator, entts);
+            var list = try self.internal_entities.getPtr(List(*List(*Table)), self.queries);
+            try list.append(self.allocator, &ptr.tables);
+        }
+
+        return ptr;
     }
 
     pub fn run(self: *World) !void {
-        var q = try self.query(.{ .system = System });
-        defer q.deinit();
+        var q = try self.queryInternal(.{ .system = System });
 
         var it = q.iter();
         while (it.next()) |e| {
@@ -209,13 +249,14 @@ test "world" {
 
     try world.addSystem(testSystem);
 
-    try world.run();
-    try world.run();
+    var index: u32 = 0;
+    while (index < 10) : (index += 1) {
+        try world.run();
+    }
 }
 
 fn testSystem(world: *World) !void {
     var query = try world.query(.{ .pos = Position, .vel = Velocity });
-    defer query.deinit();
 
     var it = query.iter();
     while (it.next()) |e| {
