@@ -6,7 +6,7 @@ const Table = entities.Table;
 const System = *const fn (*World) anyerror!void;
 const StructField = std.builtin.Type.StructField;
 
-fn IterResult(comptime types: anytype) type {
+pub fn IterResult(comptime types: anytype) type {
     const Types = @TypeOf(types);
     const types_fields = std.meta.fields(Types);
     var fields: []const StructField = &[0]StructField{};
@@ -36,7 +36,7 @@ const AccessModifier = enum {
     write,
 };
 
-fn Iter(comptime types: anytype, comptime filter: anytype) type {
+pub fn Iter(comptime types: anytype, comptime filter: anytype) type {
     const Types = @TypeOf(types);
     const fields = std.meta.fields(Types);
 
@@ -94,7 +94,7 @@ fn Iter(comptime types: anytype, comptime filter: anytype) type {
     };
 }
 
-fn Query(comptime types: anytype, comptime filter: anytype) type {
+pub fn Query(comptime types: anytype, comptime filter: anytype) type {
     const Types = @TypeOf(types);
     const Filter = @TypeOf(filter);
     const types_info = @typeInfo(Types);
@@ -146,7 +146,7 @@ fn Query(comptime types: anytype, comptime filter: anytype) type {
     };
 }
 
-const World = struct {
+pub const World = struct {
     allocator: std.mem.Allocator,
 
     entities: Entities,
