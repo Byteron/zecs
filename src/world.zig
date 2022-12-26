@@ -151,8 +151,8 @@ pub const EntityBuilder = struct {
     entities: *Entities,
     entity: Entity,
 
-    pub fn set(self: EntityBuilder, comptime component: anytype) EntityBuilder {
-        self.entities.set(@TypeOf(component), self.entity, component) catch unreachable;
+    pub fn set(self: EntityBuilder, comptime T: type, component: T) EntityBuilder {
+        self.entities.set(T, self.entity, component) catch unreachable;
         return self;
     }
 

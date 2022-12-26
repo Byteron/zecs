@@ -26,15 +26,15 @@ test "world" {
     defer world.deinit();
 
     _ = world.spawn()
-        .set(Position{ .y = 5 })
-        .set(Velocity{ .x = 5, .y = 5 });
+        .set(Position, .{ .y = 5 })
+        .set(Velocity, .{ .x = 5, .y = 5 });
 
     _ = world.spawn()
-        .set(Position{ .x = 4, .y = 5 })
-        .set(Velocity{ .x = 7, .y = 4 });
+        .set(Position, .{ .x = 4, .y = 5 })
+        .set(Velocity, .{ .x = 7, .y = 4 });
 
     _ = world.spawn()
-        .set(Position{ .x = 5, .y = 5 });
+        .set(Position, .{ .x = 5, .y = 5 });
 
     var index: u32 = 0;
     while (index < 10) : (index += 1) {
