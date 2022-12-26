@@ -4,6 +4,7 @@ const testing = std.testing;
 pub const Entities = @import("entities.zig").Enties;
 pub const Entity = @import("entities.zig").Entity;
 pub const World = @import("world.zig").World;
+pub const System = @import("world.zig").System;
 
 const Position = struct {
     x: i32 = 0,

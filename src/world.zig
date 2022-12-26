@@ -3,7 +3,7 @@ const entities = @import("entities.zig");
 const Entities = entities.Entities;
 const ComponentType = entities.ComponentType;
 const Table = entities.Table;
-const System = *const fn (*World) anyerror!void;
+pub const System = *const fn (*World) anyerror!void;
 const StructField = std.builtin.Type.StructField;
 
 pub fn IterResult(comptime types: anytype) type {
@@ -36,6 +36,30 @@ const AccessModifier = enum {
     write,
 };
 
+pub fn Cache(comptime types: anytype) type {
+    const Types = @TypeOf(types);
+    const types_fields = std.meta.fields(Types);
+    var fields: []const StructField = &[0]StructField{};
+
+    inline for (types_fields) |field| {
+        const T = @field(types, field.name);
+        fields = fields ++ [_]StructField{.{
+            .name = field.name,
+            .type = []T,
+            .is_comptime = false,
+            .alignment = @alignOf([]T),
+            .default_value = undefined,
+        }};
+    }
+
+    return @Type(.{ .Struct = .{
+        .layout = .Auto,
+        .is_tuple = false,
+        .fields = fields,
+        .decls = &[_]std.builtin.Type.Declaration{},
+    } });
+}
+
 pub fn Iter(comptime types: anytype, comptime filter: anytype) type {
     const Types = @TypeOf(types);
     const fields = std.meta.fields(Types);
@@ -61,11 +85,12 @@ pub fn Iter(comptime types: anytype, comptime filter: anytype) type {
         const Self = @This();
 
         query: *Query(types, filter),
+        cache: Cache(types) = .{},
 
         table_index: u32 = 0,
         row_index: u32 = 0,
 
-        pub fn next(self: *Self) ?IterResult(types) {
+        pub inline fn next(self: *Self) ?IterResult(types) {
             var tables = self.query.tables;
 
             if (self.table_index == tables.items.len) return null;
@@ -75,7 +100,7 @@ pub fn Iter(comptime types: anytype, comptime filter: anytype) type {
             if (self.row_index < table.len) {
                 var value = IterResult(types){};
                 inline for (array) |info| {
-                    var storage = table.getStorage(info.type) orelse unreachable;
+                    var storage = @field(self.cache, info.name);
                     @field(value, info.name) = &storage[self.row_index];
                 }
                 self.row_index += 1;
@@ -89,7 +114,20 @@ pub fn Iter(comptime types: anytype, comptime filter: anytype) type {
                 self.table_index += 1;
             }
 
-            return self.next();
+            if (self.table_index == tables.items.len) return null;
+
+            table = tables.items[self.table_index];
+
+            if (self.row_index == table.len) return null;
+
+            var value = IterResult(types){};
+            inline for (array) |info| {
+                @field(self.cache, info.name) = table.getStorage(info.type).?;
+                var storage = @field(self.cache, info.name);
+                @field(value, info.name) = &storage[self.row_index];
+            }
+            self.row_index += 1;
+            return value;
         }
     };
 }
