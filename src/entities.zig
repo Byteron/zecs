@@ -209,7 +209,7 @@ pub const Entities = struct {
     pub fn spawn(self: *Self) !Entity {
         var id = self.unused_ids.popOrNull() orelse blk: {
             self.entity_count += 1;
-            self.ensureCapacity(self.entity_count + 1);
+            try self.ensureCapacity(self.entity_count + 1);
             self.entities[self.entity_count].gen = 0;
             break :blk self.entity_count;
         };
@@ -447,7 +447,7 @@ pub const Entities = struct {
     fn ensureCapacity(self: *Self, capacity: u32) !void {
         if (capacity < self.entities.len) return;
 
-        const entities = self.allocator.alloc(EntityRecord, capacity);
+        const entities = try self.allocator.alloc(EntityRecord, capacity << 1);
         std.mem.copy(EntityRecord, entities[0..], self.entities);
         self.allocator.free(self.entities);
         self.entities = entities;
