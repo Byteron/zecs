@@ -16,26 +16,30 @@ const Velocity = struct {
     y: i32 = 0,
 };
 
+const Health = struct {
+    max: u32,
+    value: u32,
+};
+
 test "world" {
     var world = try World.init(std.testing.allocator);
     defer world.deinit();
 
-    const e1 = try world.entities.spawn();
-    try world.entities.set(Position, e1, .{ .x = 0, .y = 5 });
-    try world.entities.set(Velocity, e1, .{ .x = 5, .y = 5 });
+    _ = world.spawn()
+        .set(Position{ .y = 5 })
+        .set(Velocity{ .x = 5, .y = 5 });
 
-    const e2 = try world.entities.spawn();
-    try world.entities.set(Position, e2, .{ .x = 4, .y = 5 });
-    try world.entities.set(Velocity, e2, .{ .x = 7, .y = 4 });
+    _ = world.spawn()
+        .set(Position{ .x = 4, .y = 5 })
+        .set(Velocity{ .x = 7, .y = 4 });
 
-    const e3 = try world.entities.spawn();
-    try world.entities.set(Position, e3, .{ .x = 5, .y = 5 });
-
-    try world.addSystem(testSystem);
+    _ = world.spawn()
+        .set(Position{ .x = 5, .y = 5 });
 
     var index: u32 = 0;
     while (index < 10) : (index += 1) {
-        try world.run();
+        try testSystem(&world);
+        try emptySystem(&world);
     }
 }
 
@@ -50,4 +54,17 @@ fn testSystem(world: *World) !void {
     }
 
     std.debug.print("hello from testSystem\n", .{});
+}
+
+fn emptySystem(world: *World) !void {
+    var query = try world.query(.{ .pos = Position, .vel = Velocity, .health = Health });
+
+    var it = query.iter();
+    while (it.next()) |e| {
+        e.pos.x += e.vel.x;
+        e.pos.y += e.vel.y;
+        e.health.value = e.health.max;
+    }
+
+    std.debug.print("hello from emptySystem\n", .{});
 }

@@ -1,10 +1,11 @@
 const std = @import("std");
 const entities = @import("entities.zig");
 const Entities = entities.Entities;
+const Entity = entities.Entity;
 const ComponentType = entities.ComponentType;
 const Table = entities.Table;
-pub const System = *const fn (*World) anyerror!void;
 const StructField = std.builtin.Type.StructField;
+pub const System = *const fn (*World) anyerror!void;
 
 pub fn IterResult(comptime types: anytype) type {
     const Types = @TypeOf(types);
@@ -90,7 +91,21 @@ pub fn Iter(comptime types: anytype, comptime filter: anytype) type {
         table_index: u32 = 0,
         row_index: u32 = 0,
 
-        pub inline fn next(self: *Self) ?IterResult(types) {
+        pub fn init(query: *Query(types, filter)) Self {
+            var it = Self{
+                .query = query,
+            };
+
+            if (query.tables.items.len == 0) return it;
+            var table = query.tables.items[0];
+            inline for (array) |info| {
+                @field(it.cache, info.name) = table.getStorage(info.type).?;
+            }
+
+            return it;
+        }
+
+        pub fn next(self: *Self) ?IterResult(types) {
             var tables = self.query.tables;
 
             if (self.table_index == tables.items.len) return null;
@@ -131,6 +146,25 @@ pub fn Iter(comptime types: anytype, comptime filter: anytype) type {
         }
     };
 }
+
+pub const EntityBuilder = struct {
+    entities: *Entities,
+    entity: Entity,
+
+    pub fn set(self: EntityBuilder, comptime component: anytype) EntityBuilder {
+        self.entities.set(@TypeOf(component), self.entity, component) catch unreachable;
+        return self;
+    }
+
+    pub fn remove(self: EntityBuilder, comptime T: type) EntityBuilder {
+        self.entities.remove(T, self.entity) catch unreachable;
+        return self;
+    }
+
+    pub fn id(self: EntityBuilder) Entity {
+        return self.entity;
+    }
+};
 
 pub fn Query(comptime types: anytype, comptime filter: anytype) type {
     const Types = @TypeOf(types);
@@ -173,9 +207,7 @@ pub fn Query(comptime types: anytype, comptime filter: anytype) type {
         }
 
         pub fn iter(self: *Self) Iter(types, filter) {
-            return Iter(types, filter){
-                .query = self,
-            };
+            return Iter(types, filter).init(self);
         }
 
         pub fn getTables(self: *Self) []*Table {
@@ -190,7 +222,8 @@ pub const World = struct {
     entities: Entities,
     internal_entities: Entities,
 
-    queries: entities.Entity,
+    queries: Entity,
+    world: Entity,
 
     pub fn init(allocator: std.mem.Allocator) !World {
         const List = std.ArrayListUnmanaged;
@@ -204,6 +237,7 @@ pub const World = struct {
             .internal_entities = internal_entities,
             .entities = try Entities.init(allocator),
             .queries = queries,
+            .world = try internal_entities.spawn(),
         };
     }
 
@@ -224,6 +258,46 @@ pub const World = struct {
     pub fn addSystem(self: *World, system: System) !void {
         const entity = try self.internal_entities.spawn();
         try self.internal_entities.set(System, entity, system);
+    }
+
+    pub fn spawn(self: *World) EntityBuilder {
+        const entity = self.entities.spawn() catch unreachable;
+        return EntityBuilder{
+            .entities = &self.entities,
+            .entity = entity,
+        };
+    }
+
+    pub fn despawn(self: *World, entity: Entity) void {
+        self.entities.despawn(entity) catch unreachable;
+    }
+
+    pub fn setComponent(self: *World, comptime T: type, entity: Entity, component: T) void {
+        self.entities.set(T, entity, component) catch unreachable;
+    }
+
+    pub fn getComponent(self: *World, comptime T: type, entity: Entity) ?*const T {
+        return self.entities.get(T, entity);
+    }
+
+    pub fn removeComponent(self: *World, comptime T: type, entity: Entity) void {
+        self.entities.remove(T, entity) catch unreachable;
+    }
+
+    pub fn setResource(self: *World, comptime T: type, resource: T) void {
+        self.internal_entities.set(T, self.world, resource);
+    }
+
+    pub fn getResource(self: *World, comptime T: type) *T {
+        self.internal_entities.getPtr(T, self.world) catch unreachable;
+    }
+
+    pub fn removeResource(self: *World, comptime T: type) void {
+        self.internal_entities.remove(T, self.world) catch unreachable;
+    }
+
+    pub fn isAlive(self: *World, entity: Entity) bool {
+        return self.entities.isAlive(entity);
     }
 
     pub fn query(self: *World, comptime types: anytype) !*Query(types, .{}) {
