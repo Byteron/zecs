@@ -177,7 +177,7 @@ pub const Entities = struct {
     pub fn init(allocator: std.mem.Allocator) !Self {
         var entities = Self{
             .allocator = allocator,
-            .entities = try allocator.alloc(EntityRecord, 256),
+            .entities = try allocator.alloc(EntityRecord, 512),
         };
 
         const types = try allocator.alloc(ComponentType, 1);
@@ -209,6 +209,7 @@ pub const Entities = struct {
     pub fn spawn(self: *Self) !Entity {
         var id = self.unused_ids.popOrNull() orelse blk: {
             self.entity_count += 1;
+            self.ensureCapacity(self.entity_count + 1);
             self.entities[self.entity_count].gen = 0;
             break :blk self.entity_count;
         };
@@ -441,6 +442,15 @@ pub const Entities = struct {
         try self.hashed_tables.put(self.allocator, hash, &self.tables.items[table.id]);
         try self.edges.append(self.allocator, .{});
         return &self.tables.items[self.tables.items.len - 1];
+    }
+
+    fn ensureCapacity(self: *Self, capacity: u32) !void {
+        if (capacity < self.entities.len) return;
+
+        const entities = self.allocator.alloc(EntityRecord, capacity);
+        std.mem.copy(EntityRecord, entities[0..], self.entities);
+        self.allocator.free(self.entities);
+        self.entities = entities;
     }
 };
 
