@@ -285,11 +285,11 @@ pub const World = struct {
     }
 
     pub fn setResource(self: *World, comptime T: type, resource: T) void {
-        self.internal_entities.set(T, self.world, resource);
+        self.internal_entities.set(T, self.world, resource) catch unreachable;
     }
 
     pub fn getResource(self: *World, comptime T: type) *T {
-        self.internal_entities.getPtr(T, self.world) catch unreachable;
+        return self.internal_entities.getPtr(T, self.world) catch unreachable;
     }
 
     pub fn removeResource(self: *World, comptime T: type) void {
